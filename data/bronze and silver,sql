@@ -1,0 +1,46 @@
+-- Bronze Layer: Extract raw, relevant complaints from CFPB public dataset
+
+SELECT 
+  complaint_id,
+  date_received,
+  product,
+  issue,
+  consumer_complaint_narrative
+FROM `bigquery-public-data.cfpb_complaints.complaint_database`
+WHERE 
+  LOWER(product) LIKE '%credit card%'
+  AND consumer_complaint_narrative IS NOT NULL
+  AND (
+    LOWER(issue) LIKE '%privacy%' 
+    OR LOWER(issue) LIKE '%identity%'
+  )
+ORDER BY date_received DESC
+LIMIT 200;
+
+----------------------------------------------------------------------------------------
+
+-- Silver Layer: Clean data and apply PII masking for regulated environment
+
+CREATE OR REPLACE TABLE `complaints_project.silver_complaints` AS
+SELECT
+  complaint_id,
+  date_received,
+  issue,
+
+  -- Cleaned narrative for NLP
+  LOWER(TRIM(consumer_complaint_narrative)) AS clean_narrative,
+
+  -- Mask PII: emails and phone numbers
+  REGEXP_REPLACE(
+    REGEXP_REPLACE(
+      LOWER(TRIM(consumer_complaint_narrative)),
+      r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}',
+      '[MASKED_EMAIL]'
+    ),
+    r'\b\d{10}\b',
+    '[MASKED_PHONE]'
+  ) AS masked_narrative
+
+FROM `complaints_project.bronze_complaints`
+WHERE 
+  LENGTH(consumer_complaint_narrative) > 100;
